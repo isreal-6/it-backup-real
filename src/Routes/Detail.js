@@ -1,15 +1,28 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
-import Subtask from "../components/Subtask";
+import { useEffect, useState, useCallback } from "react";
 import SubtaskForm from "../components/SubtaskForm";
+import ReactFlow, {
+  useNodesState,
+  useEdgesState,
+  addEdge,
+} from "reactflow";
+import "reactflow/dist/style.css";
+import "./Detail.css";
 
 function Detail() {
-  const { id } = useParams(); // 프로젝트 ID
+  const { id } = useParams();
   const navigate = useNavigate();
-  const [project, setProject] = useState(null); // 해당 프로젝트
+
+  const [project, setProject] = useState(null);
   const [showForm, setShowForm] = useState(false);
 
-  // 해당 프로젝트 불러오기
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+  // 중심 노드 ID 상수
+  const CENTER_NODE_ID = "center";
+
+  // 프로젝트 불러오기
   useEffect(() => {
     const projects = JSON.parse(localStorage.getItem("projects") || "[]");
     const found = projects.find((p) => String(p.id) === id);
@@ -21,7 +34,52 @@ function Detail() {
     }
   }, [id, navigate]);
 
-  // 프로젝트 저장 함수
+  // subtasks → nodes 변환 함수
+  const generateNodesFromProject = (project) => {
+    const baseNode = [
+      {
+        id: CENTER_NODE_ID,
+        type: "default",
+        data: { label: project.title, page: "/center" },
+        position: { x: 300, y: 200 },
+        draggable: false,
+        className: "my-node center-node",
+      },
+    ];
+
+    const subtaskNodes = (project.subtasks || []).map((subtask) => ({
+      id: subtask.id.toString(),
+      type: "default",
+      data: { label: subtask.title },
+      position: {
+        x: Math.random() * 400 + 100,
+        y: Math.random() * 200 + 100,
+      },
+      className: "my-node",
+    }));
+
+    return [...baseNode, ...subtaskNodes];
+  };
+
+  // subtasks → edges 변환 함수
+  const generateEdgesFromProject = (project) => {
+    return (project.subtasks || []).map((subtask) => ({
+      id: `e-center-${subtask.id}`,
+      source: CENTER_NODE_ID,
+      target: subtask.id.toString(),
+    }));
+  };
+
+  // project가 바뀔 때 nodes/edges 세팅
+  useEffect(() => {
+    if (project) {
+      const newNodes = generateNodesFromProject(project);
+      const newEdges = generateEdgesFromProject(project);
+      setNodes(newNodes);
+      setEdges(newEdges);
+    }
+  }, [project, setNodes, setEdges]);
+
   const updateProjectInStorage = (updatedProject) => {
     const projects = JSON.parse(localStorage.getItem("projects") || "[]");
     const newProjects = projects.map((p) =>
@@ -30,65 +88,76 @@ function Detail() {
     localStorage.setItem("projects", JSON.stringify(newProjects));
   };
 
+  const onNodeClick = useCallback(
+    (event, node) => {
+      if (node.id !== CENTER_NODE_ID) {
+        navigate(`/project/${project.id}/${node.id}`);
+      } else {
+        alert("페이지 정보가 없습니다.");
+      }
+    },
+    [navigate, CENTER_NODE_ID, project]
+  );
+
+  const onConnect = useCallback(
+    (params) => setEdges((eds) => addEdge(params, eds)),
+    [setEdges]
+  );
+
+  // subtask 추가 → project.subtasks 업데이트
   const handleAddSubtask = (newSubtask) => {
     const updated = {
       ...project,
-      subtasks: [...(project.subtasks || []), { id: Date.now(), ...newSubtask }],
+      subtasks: [...(project.subtasks || []), newSubtask],
     };
     setProject(updated);
     updateProjectInStorage(updated);
     setShowForm(false);
   };
 
-  const editSubtask = (updatedSubtask) => {
-    const updated = {
-      ...project,
-      subtasks: project.subtasks.map((s) =>
-        s.id === updatedSubtask.id ? updatedSubtask : s
-      ),
-    };
-    setProject(updated);
-    updateProjectInStorage(updated);
+  const handleSubmitBoth = (newSubtask) => {
+    const newId = Date.now();
+    const newSubtaskWithId = { id: newId, ...newSubtask };
+    handleAddSubtask(newSubtaskWithId);
   };
 
-  const deleteSubtask = (id) => {
-    const updated = {
-      ...project,
-      subtasks: project.subtasks.filter((s) => s.id !== id),
-    };
-    setProject(updated);
-    updateProjectInStorage(updated);
-  };
+  // 상태 업데이트 이후 값 찍기
+  useEffect(() => {
+    console.log("Nodes updated:", nodes);
+  }, [nodes]);
+
+  useEffect(() => {
+    console.log("Edges updated:", edges);
+  }, [edges]);
 
   if (!project) return <div>Loading...</div>;
 
   return (
-    <div>
-      <button onClick={() => navigate(-1)}>← 뒤로가기</button>
-      <h1>{project.title}</h1>
+    <div style={{ width: "100%", height: "100vh" }}>
+    <button onClick={() => navigate(-1)}>← 뒤로가기</button>
+    <button onClick={() => navigate("/store")}>상점</button>
+  {/* <h1>{project.title}</h1>
       <h2>마감일: {project.deadline}</h2>
-      <h2>{project.progress}%</h2>
+      <h2>{project.progress}%</h2>*/}
+      <button onClick={() => setShowForm(true)}>노드 추가</button> 
 
       {showForm && (
         <SubtaskForm
-          onSubmit={handleAddSubtask}
+          onSubmit={handleSubmitBoth}
           onClose={() => setShowForm(false)}
         />
       )}
 
-      <ul>
-        {project.subtasks?.map((subtask) => (
-          <Subtask
-            key={subtask.id}
-            subtask={subtask}
-            onDeleteSubtask={deleteSubtask}
-            onEditSubtask={editSubtask}
-          />
-        ))}
-      </ul>
-
-      <button onClick={() => setShowForm(true)}>세부 목표 추가</button>
-
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onNodeClick={onNodeClick}
+        fitView
+        key={`${nodes.length}-${edges.length}`}
+      />
     </div>
   );
 }
